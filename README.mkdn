@@ -67,14 +67,43 @@ original query\_parameter method.
 
 This role defines the following methods.
 
-## query\_data
+## query\_data (?@query\_params, ?\\%options)
 
-If a query parameter 'q' exists, deserialize that using [JSONY](https://metacpan.org/pod/JSONY) and return the
-data references (could be a hashref, or arrayref depending on the query construction.
+For each item in @query\_params that exists in $request->query\_parameters deserialize
+using [JSONY](https://metacpan.org/pod/JSONY)  and return the data references (could be a hashref, or arrayref 
+depending on the query construction.
 
-## has\_query\_data
+If no @query\_params are submitted, assume 'q' as the default.
 
-Returns true if query\_data is present in the request.
+The %options hash allows you to set callback to handle exceptional conditions. All callbacks
+get invoked with two parameters, the current $request object, and the name of the
+query parameter that caused the condition.  For example the follow substitutes the string
+'\[\]' when a $key is missing from %{$c->req->query\_parameters}:
+
+    $c->req->query_data(qw/a b c/, +{ 
+      param_missing => sub {
+        my ($req, $key) = @_;
+        return '[]';
+      }
+    });
+
+Currently we support the following exceptional conditions:
+
+### param\_missing
+
+Gets $request, $key
+
+This is the callback that gets invoked when $c->req->query\_paramerters->{$key} does not
+exist.  The default behavior is to return an empty string, which JSONY deserialized into
+a hashref.  This allows you to request parameters that are optional and not product an
+exception.  
+
+### parse\_error
+
+Gets $request, $key, $error\_message
+
+This callback is called when JSONY throws an exception trying to parse the value
+associated with $key.  The default is to just rethrow the error.
 
 # AUTHOR
 

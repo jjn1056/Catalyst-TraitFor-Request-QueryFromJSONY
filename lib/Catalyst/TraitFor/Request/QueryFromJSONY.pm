@@ -1,28 +1,57 @@
 package Catalyst::TraitFor::Request::QueryFromJSONY;
 
-use Moose::Role;
+use Moo::Role;
 use JSONY;
 
-our $VERSION = '0.001';
+our $VERSION = '0.002';
 
-has query_data => (
+has query_data_options => (
   is=>'ro',
+  required=>1,
   lazy=>1,
-  predicate=>'has_query_data',
-  builder=>'_build_query_data');
+  builder=>'build_query_data_options');
 
-  sub _build_query_data {
-    return shift->_query_data_from('q');
+  sub build_query_data_options {
+    return +{
+      param_missing => sub { my ($req, $param) = @_; return '{}' },
+      parse_error => sub { my ($req, $param, $err) = @_; die $err },
+    };
   }
 
-sub _query_data_from {
-  my ($self, $param) = @_;
-  my $q = $self->query_parameters;
-  if(exists $q->{$param}) {
-    return JSONY->new->load($q->{$param});
-  } else {
-    return;
-  }
+has _jsony => (
+  is=>'ro',
+  required=>1,
+  lazy=>1,
+  builder=>'build_jsony');
+
+  sub build_jsony { JSONY->new }
+
+has _query_data_cache => (
+  is=>'ro',
+  required=>1, 
+  init_arg=>undef,
+  lazy=>1,
+  default=>sub { +{} });
+
+sub query_data {
+  my ($self, @params) = @_;
+  my $proto = +{};
+
+  $proto = pop @params if (@params && ref($params[-1]) eq 'HASH');
+  @params = ('q') unless @params;
+
+  my %local_options = (%{$self->query_data_options}, %$proto);
+
+  return map {
+    my $val = exists $self->query_parameters->{$_} ?
+      $self->query_parameters->{$_} :
+      $local_options{param_missing}->($self, $_);
+
+    my $deserialized = eval { $self->_jsony->load($val) } 
+      || $local_options{parse_error}->($self, $val, $@);
+
+    $self->_query_data_cache->{$_} ||= $deserialized;
+    } @params;
 }
 
 1;
@@ -96,14 +125,43 @@ original query_parameter method.
 
 This role defines the following methods.
 
-=head2 query_data
+=head2 query_data (?@query_params, ?\%options)
 
-If a query parameter 'q' exists, deserialize that using L<JSONY> and return the
-data references (could be a hashref, or arrayref depending on the query construction.
+For each item in @query_params that exists in $request->query_parameters deserialize
+using L<JSONY>  and return the data references (could be a hashref, or arrayref 
+depending on the query construction.
 
-=head2 has_query_data
+If no @query_params are submitted, assume 'q' as the default.
 
-Returns true if query_data is present in the request.
+The %options hash allows you to set callback to handle exceptional conditions. All callbacks
+get invoked with two parameters, the current $request object, and the name of the
+query parameter that caused the condition.  For example the follow substitutes the string
+'[]' when a $key is missing from %{$c->req->query_parameters}:
+
+    $c->req->query_data(qw/a b c/, +{ 
+      param_missing => sub {
+        my ($req, $key) = @_;
+        return '[]';
+      }
+    });
+
+Currently we support the following exceptional conditions:
+
+=head3 param_missing
+
+Gets $request, $key
+
+This is the callback that gets invoked when $c->req->query_paramerters->{$key} does not
+exist.  The default behavior is to return an empty string, which JSONY deserialized into
+a hashref.  This allows you to request parameters that are optional and not product an
+exception.  
+
+=head3 parse_error
+
+Gets $request, $key, $error_message
+
+This callback is called when JSONY throws an exception trying to parse the value
+associated with $key.  The default is to just rethrow the error.
 
 =head1 AUTHOR
  
